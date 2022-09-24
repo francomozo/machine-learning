@@ -18,7 +18,7 @@
 '''
 
 # Imports
-from turtle import down
+from time import perf_counter
 
 import torch
 import torch.nn as nn
@@ -50,10 +50,10 @@ print(f'Using device {device}.')
 # Hyperparameters
 input_size = 784 # MNIST dataset has 28x28=784 sized images, 60k for train and 10k for test   
 num_classes = 10 # 10 digits
-hidden_units = 50
+hidden_units = 512
 num_epochs = 10
-lr = 0.01
-bs = 64
+lr = 0.003
+bs = 512
 
 # Load data
 train_dataset = datasets.MNIST(root='data/', train=True, download=True, transform=transforms.ToTensor()) # 4)
@@ -90,8 +90,36 @@ def check_accuracy(loader, model, device):
     model.train()
     return num_corrects, tot_samples, acc 
 
+# Time management
+class TimeMeter():
+    def __init__(self):
+        self.total_time_elapsed = 0
+        self.epoch_time_elapsed = 0
+        
+    def start_global_timer(self):
+        self.total_time_elapsed = perf_counter()
+
+    def end_global_timer(self):
+        self.total_time_elapsed = perf_counter() - self.total_time_elapsed
+
+    def get_total_time_elaped(self):
+        return self.total_time_elapsed 
+    
+    def start_epoch_timer(self):
+        self.epoch_time_elapsed = perf_counter()
+
+    def end_epoch_timer(self):
+        self.epoch_time_elapsed = perf_counter() - self.epoch_time_elapsed
+
+    def get_epoch_time_elaped(self):
+        return self.epoch_time_elapsed
+
+time_meter = TimeMeter()
+
 # Train network
+time_meter.start_global_timer()
 for epoch in range(num_epochs):
+    time_meter.start_epoch_timer()
     for idx, (data, targets) in enumerate(train_loader):
         # Move data to available device
         data = data.to(device)
@@ -122,7 +150,8 @@ for epoch in range(num_epochs):
         
         # Take step
         optimizer.step()
-        
+    
+    time_meter.end_epoch_timer()
     # For each epoch check accuracy on train and test
     print(f'Epoch: {epoch + 1}/{num_epochs} || ', end='')
     with torch.no_grad():
@@ -130,6 +159,9 @@ for epoch in range(num_epochs):
         print(f'Train: got {num_corrects}/{int(tot_samples/1000)}K with acc {train_acc:.2f} || ', end='')
         
         num_corrects, tot_samples, test_acc = check_accuracy(test_loader, net, device)
-        print(f'Test: got {num_corrects}/{int(tot_samples/1000)}K with acc {test_acc:.2f}')
+        print(f'Test: got {num_corrects}/{int(tot_samples/1000)}K with acc {test_acc:.2f} || ', end='')
     
-    
+    print(f'Time elapsed: {int(time_meter.get_epoch_time_elaped())}s.')    
+
+time_meter.end_global_timer()
+print(f'Total time elapsed: {int(time_meter.get_total_time_elaped())}s.')
