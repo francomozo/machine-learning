@@ -1,21 +1,25 @@
 '''
-    The CNN is the LeNet
-    Since in the original paper the model takes a 32x32 image, I will use a padded MNIST dataset 
-    LeNet-5 (Taken from the paper)
-        obs: Cx con layer, Sx sub-sampling layers, Fx fully connected layers)
-             Sub-sampling layers is a method of downsampling feature maps (ie: pooling)
-        Input -> C1 -> S2 -> C3 -> S4 -> C5 -> F6 -> Out
+    LeNet-5 (the coded version is not strictly the one from the paper)
+    (Cx con layer, Sx sub-sampling layers, Fx fully connected layers)
+    (Sub-sampling layers is a method of downsampling feature maps (ie: pooling))
+    
+    Input -> C1 -> S2 -> C3 -> S4 -> C5 -> F6 -> Out
+    
     - Input: 32x32 1 channel images 
-    - C1:    6 5x5 convolution filters with 28x28 feature maps as outputs
-    - S2:    outputs 6 features maps of size 14x14, meaning pooling of size 2x2
-    - C3:    outputs 16 feature maps of size 10x10, 5x5 convolution filters
-    - S4:    outputs 16 feature maps of size 5x5, meaning pooling of 2x2
-    
-    conv in_channels=1, 
-    
+    - C1:    6 5x5 convolution filters, out features 28x28 (stride=1, padding=0)
+    - S2:    out features of size 14x14 (6 feature maps), meaning pooling (kernel=(2, 2))
+    - C3:    16 5x5 convolution filters, out features 10x10 (stride=1, padding=0) 
+    - S4:    out features of size 5x5 (16 feature maps), meaning pooling (kernel=(2, 2))
+    - C5:    120 5x5 convolution filters, out features 1x1 (stride=1, padding=0)
+    - F6:    84 dim fully connected layer
+
+    Formula:
+    out_features = floor((in_features + 2*padding_size - kernel_size) / (stride_size)) + 1
+
+
     Resources:
     - 1) https://pytorch.org/tutorials/beginner/blitz/neural_networks_tutorial.html#id1
-     
+
 '''
 
 # Imports
@@ -30,19 +34,39 @@ from torchvision import datasets, transforms
 
 
 # Create convolutional neural network
-class CNN(nn.Module):
+class LeNet(nn.Module):
     def __init__(self):
         super().__init__()
-        pass
+        self.pool = nn.AvgPool2d(kernel_size=(2, 2))
+        
+        self.C1 = nn.Conv2d(in_channels=1, out_channels=6, kernel_size=(5, 5))
+        self.S2 = self.pool
+        self.C3 = nn.Conv2d(in_channels=6, out_channels=16, kernel_size=(5, 5))
+        self.S4 = self.pool
+        self.C5 = nn.Conv2d(in_channels=16, out_channels=120, kernel_size=(5, 5))
+        self.F6 = nn.Linear(in_features=120, out_features=84)
+        self.F7 = nn.Linear(in_features=84, out_features=10) # the output layer
+
+    def forward(self, x):
+        x = F.relu(self.C1(x))
+        x = self.S2(x)
+        x = F.relu(self.C3(x))
+        x = self.S4(x)
+        x = F.relu(self.C5(x))
+
+        x = x.reshape(x.shape[0], -1)
+        x = F.relu(self.F6(x))
+
+        x = self.F7(x)
+
+        return x
     
 # Set device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using device {device}.')
 
 # Hyperparameters
-num_classes = 10
-hidden_units = 512
-num_epochs = 20
+num_epochs = 10
 lr = 0.004
 bs = 512
 
@@ -54,7 +78,7 @@ test_dataset = datasets.MNIST(root='data/', train=False, download=True, transfor
 test_loader = DataLoader(test_dataset, batch_size=bs, shuffle=True)
 
 # Initialize network and send to device
-net = CNN(input_size, num_classes, hidden_units).to(device)
+net = LeNet().to(device)
 
 # Loss and optimizer
 criterion = nn.CrossEntropyLoss()
@@ -68,8 +92,9 @@ def check_accuracy(loader, model, device):
     tot_samples = 0
     
     for x, y in loader:
+        x = F.pad(x, (2, 2, 2, 2))
+
         x, y = x.to(device), y.to(device)
-        x = x.reshape(x.shape[0], -1)
         
         scores = model(x)
         _, preds = scores.max(1)
@@ -111,6 +136,9 @@ time_meter.start_global_timer()
 for epoch in range(num_epochs):
     time_meter.start_epoch_timer()
     for idx, (data, targets) in enumerate(train_loader):
+        # pad MNIST from 28x28 to 32x32
+        data = F.pad(data, (2, 2, 2, 2))
+        
         # Move data to available device
         data = data.to(device)
         targets = targets.to(device)
