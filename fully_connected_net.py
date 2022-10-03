@@ -9,9 +9,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
-from src.metrics import check_accuracy
 from src.models import SimpleNN
-from src.utils.common import TimeMeter
 
 # Set device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -26,11 +24,15 @@ lr = 0.004
 bs = 512
 
 # Load data
-train_dataset = datasets.MNIST(root='data/', train=True, download=True, transform=transforms.ToTensor())
-train_loader = DataLoader(train_dataset, batch_size=bs, shuffle=True)
-
-test_dataset = datasets.MNIST(root='data/', train=False, download=True, transform=transforms.ToTensor())
-test_loader = DataLoader(test_dataset, batch_size=bs, shuffle=True)
+modes = ['train', 'val']
+datasets = {
+    x: datasets.MNIST(root='data/', train=(x == 'train'), download=True, transform=transforms.ToTensor())
+    for x in modes
+}
+dataloaders = {
+    x: DataLoader(datasets[x], batch_size=bs, shuffle=(x == 'train'))
+    for x in modes
+}
 
 # Initialize network and send to device
 model = SimpleNN(input_size, num_classes, hidden_units).to(device)
@@ -39,45 +41,42 @@ model = SimpleNN(input_size, num_classes, hidden_units).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(params=model.parameters(), lr=lr)
 
-time_meter = TimeMeter()
-
-# Train network
-time_meter.start_global_timer()
 for epoch in range(num_epochs):
-    time_meter.start_epoch_timer()
-    for idx, (data, targets) in enumerate(train_loader):
-        # Move data to available device
-        data = data.to(device)
-        targets = targets.to(device)
-        
-        # Reshape data for fully connected net
-        data = data.reshape(data.shape[0], -1)
-        
-        # Zero previous gradients
-        optimizer.zero_grad()
-        
-        # Forward propagate + Loss
-        scores = model(data)
-        loss = criterion(scores, targets)
-        
-        # Backpropagate
-        loss.backward()
-        
-        # Take step
-        optimizer.step()
-    
-    time_meter.end_epoch_timer()
+    print(f'Epoch {epoch + 1}/{num_epochs}')
+    print('-' * 10)
 
-    # For each epoch check accuracy on train and test
-    print(f'Epoch: {epoch + 1}/{num_epochs} || ', end='')
-    with torch.no_grad():
-        num_corrects, tot_samples, train_acc = check_accuracy(train_loader, model, device)
-        print(f'Train: got {num_corrects}/{int(tot_samples/1000)}K with acc {train_acc:.2f} || ', end='')
-        
-        num_corrects, tot_samples, test_acc = check_accuracy(test_loader, model, device)
-        print(f'Test: got {num_corrects}/{int(tot_samples/1000)}K with acc {test_acc:.2f} || ', end='')
-    
-    print(f'Time elapsed: {int(time_meter.get_epoch_time_elaped())}s.')    
+    for phase in modes:
+        if phase == 'train':
+            model.train()
+        else:
+            model.eval() 
 
-time_meter.end_global_timer()
-print(f'Total time elapsed: {int(time_meter.get_total_time_elaped())}s.')
+        running_loss = 0.0
+        running_corrects = 0
+
+        for inputs, labels in dataloaders[phase]:
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
+            # Reshape data for fully connected net
+            inputs = inputs.reshape(inputs.shape[0], -1)
+
+            optimizer.zero_grad()
+
+            with torch.set_grad_enabled(phase == 'train'):
+                scores = model(inputs)
+                loss = criterion(scores, labels)
+                
+                _, preds = scores.max(1)
+
+                if phase == 'train':
+                    loss.backward()
+                    optimizer.step()
+
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += torch.sum(preds == labels)
+                
+        epoch_loss = running_loss / len(dataloaders[phase].dataset)
+        epoch_acc = running_corrects.double() / len(dataloaders[phase].dataset)
+
+        print(f'{phase} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')    
