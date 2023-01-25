@@ -1,1 +1,2 @@
-from .basics import SimpleNN, LeNet
+from .basics import LeNet, SimpleNN
+from .unet import UNet
