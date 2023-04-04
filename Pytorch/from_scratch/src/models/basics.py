@@ -17,11 +17,11 @@ class SimpleNN(nn.Module):
 
 
 class LeNet(nn.Module):
-    def __init__(self):
+    def __init__(self, in_channels=1):
         super().__init__()
         self.pool = nn.AvgPool2d(kernel_size=(2, 2))
         
-        self.C1 = nn.Conv2d(in_channels=1, out_channels=6, kernel_size=(5, 5))
+        self.C1 = nn.Conv2d(in_channels=in_channels, out_channels=6, kernel_size=(5, 5))
         self.S2 = self.pool
         self.C3 = nn.Conv2d(in_channels=6, out_channels=16, kernel_size=(5, 5))
         self.S4 = self.pool
