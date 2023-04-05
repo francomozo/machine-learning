@@ -16,6 +16,8 @@ import torchvision
 import torchvision.transforms as transforms
 from src.models import LeNet
 
+raise NotImplementedError('This script is not finished yet')
+
 # => Constants
 EPOCHS = 10
 batch_size = 4
