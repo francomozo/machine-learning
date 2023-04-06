@@ -8,6 +8,7 @@ from _init_paths import _init_path
 
 _init_path('Pytorch/from_scratch/src', recursive=True)
 
+import json
 from pathlib import Path
 
 import torch
@@ -23,7 +24,7 @@ from utils import BestModel, check_accuracy
 
 # => Constants
 EPOCHS = 2000
-BATCH_SIZE = 4
+BATCH_SIZE = 16
 LR = 1e-4
 CLASSES = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 MODEL_NAME = Path('lenet_pretrained_cifar.pth')
@@ -104,8 +105,8 @@ for epoch in tqdm(range(EPOCHS), desc='Epochs', leave=False):
       
     # Store best model for saving
     best_model.compare_and_store(net, test_acc, epoch)
-    
-    if epoch % 10 == 0:
+
+    if epoch % 20 == 0:
         continue_training = input('Continue training? [y/n]: ')
         if continue_training == 'n':
             break
@@ -113,3 +114,10 @@ for epoch in tqdm(range(EPOCHS), desc='Epochs', leave=False):
 print('Finished Training')
 best_model.save()
 
+exp_data = {
+    'lr': LR,
+    'optimizer': 'AdamW',
+    'bz': BATCH_SIZE,
+}
+with OUTDIR.joinpath('hyp.json').open('w') as fp:
+    json.dump(exp_data, fp)

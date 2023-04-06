@@ -1,58 +1,93 @@
-# @author: Franco Mozo
-# @date:   04-04-2023
-# @desc:   This script uses a model with layers of a backbone frozen and the last layers unfrozen
-#          to train a model. The idea is to train the last layers first and then unfreeze the
-#          backbone gradually and train the whole model.
-#          Will use this https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
-#          as a reference for the pretraining
+"""
+@author: Franco Mozo
+@date:   06-04-2023
+@desc:   
+"""
+
 from _init_paths import _init_path
 
 _init_path('Pytorch/from_scratch/src', recursive=True)
 
+import json
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
 import torchvision.transforms as transforms
 from src.models import LeNet
-
-raise NotImplementedError('This script is not finished yet')
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+from utils import Animals10Dataset, BestModel, check_accuracy
 
 # => Constants
-EPOCHS = 10
-batch_size = 4
-classes = ('plane', 'car', 'bird', 'cat',
-           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+EPOCHS = 2000
+BATCH_SIZE = 16
+LR = 1e-4
+IMAGE_SIZE = 32
+PRINT_EACH = 200
+OUTDIR = Path('exps/gradual_unfreezing')
+MODEL_NAME = Path('finetuned_lenet_animal10.pth')
+PRETRAINED_MODEL = Path('exps/pretraining/3/lenet_pretrained_cifar.pth')
+
+
+# => Paths
+# Create the output directory
+OUTDIR.mkdir(exist_ok=True)
+prev_exps = [str(x.stem) for x in OUTDIR.iterdir()]
+if prev_exps:
+    exp_num = int(sorted(list(prev_exps), key=lambda x: int(x))[-1]) + 1
+else:
+    exp_num = 1
+OUTDIR = OUTDIR / str(exp_num)
+OUTDIR.mkdir(exist_ok=True)
+
+# => Tensorboard writer and device and best model
+writer = SummaryWriter(log_dir=OUTDIR)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+best_model = BestModel(pt_path=OUTDIR / MODEL_NAME)
+
+# => Seeds
+torch.manual_seed(0)
+torch.backends.cudnn.deterministic = True
 
 # => Data
 transform = transforms.Compose([
     transforms.ToTensor(),
+    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE), antialias=True),
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
 ])
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                        download=True, transform=transform)
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                          shuffle=True, num_workers=2)
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                       download=True, transform=transform)
-testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                         shuffle=False, num_workers=2)
+trainloader = DataLoader(
+    Animals10Dataset(root='data/animals10/splits', train=True, transforms=transform), 
+    batch_size=BATCH_SIZE,
+    shuffle=True, 
+    num_workers=2
+)
+testloader = DataLoader(
+    Animals10Dataset(root='data/animals10/splits', train=False, transforms=transform), 
+    batch_size=BATCH_SIZE,
+    shuffle=False, 
+    num_workers=2
+)
 
 # => Model
-net = LeNet(in_channels=3)
+net = LeNet(in_channels=3).to(device)
+net.load_state_dict(torch.load(PRETRAINED_MODEL)['state_dict'])
 
 # => Loss and optimizer
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+optimizer = optim.AdamW(net.parameters(), lr=LR)
 
 # => Train
-for epoch in range(2):  # loop over the dataset multiple times
-
+for epoch in tqdm(range(EPOCHS), desc='Epochs', leave=False):
+    epoch += 1
+    
     running_loss = 0.0
-    for i, data in enumerate(trainloader, 0):
-        # get the inputs; data is a list of [inputs, labels]
-        inputs, labels = data
+    for i, (inputs, labels) in tqdm(enumerate(trainloader), desc='Batches', total=len(trainloader), leave=False):
+        inputs = inputs.to(device)
+        labels = labels.to(device)
 
         # zero the parameter gradients
         optimizer.zero_grad()
@@ -65,8 +100,28 @@ for epoch in range(2):  # loop over the dataset multiple times
 
         # print statistics
         running_loss += loss.item()
-        if i % 2000 == 1999:    # print every 2000 mini-batches
-            print(f'[{epoch + 1}, {i + 1:5d} / {len(trainloader):5d}] loss: {running_loss / 2000:.3f}')
+        if i % PRINT_EACH == PRINT_EACH - 1:    # print every PRINT_EACH mini-batches
+            writer.add_scalar('training loss', running_loss / PRINT_EACH, epoch * len(trainloader) + i)    
             running_loss = 0.0
+    
+    test_acc = check_accuracy(testloader, net, device)
+    writer.add_scalar('test accuracy', test_acc, epoch)
+      
+    # Store best model for saving
+    best_model.compare_and_store(net, test_acc, epoch)
+
+    if epoch % 5 == 0:
+        continue_training = input('Continue training? [y/n]: ')
+        if continue_training == 'n':
+            break
 
 print('Finished Training')
+best_model.save()
+
+exp_data = {
+    'lr': LR,
+    'optimizer': 'AdamW',
+    'bz': BATCH_SIZE,
+}
+with OUTDIR.joinpath('hyp.json').open('w') as fp:
+    json.dump(exp_data, fp)
