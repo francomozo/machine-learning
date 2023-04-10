@@ -1,7 +1,7 @@
 """
 @author: Franco Mozo
 @date:   06-04-2023
-@desc:   
+@desc:   This script allows to finetune a pretrained model (trained with pretrain.py) on a new dataset.
 """
 
 from _init_paths import _init_path
@@ -22,15 +22,18 @@ from tqdm import tqdm
 from utils import Animals10Dataset, BestModel, check_accuracy
 
 # => Constants
-EPOCHS = 2000
-BATCH_SIZE = 16
-LR = 1e-4
+EPOCHS = 50
+BATCH_SIZE = 128
+LR = 0.0002
 IMAGE_SIZE = 32
-PRINT_EACH = 200
+PRINT_N_PER_EP = 5
 OUTDIR = Path('exps/gradual_unfreezing')
 MODEL_NAME = Path('finetuned_lenet_animal10.pth')
 PRETRAINED_MODEL = Path('exps/pretraining/3/lenet_pretrained_cifar.pth')
-
+FREEZE_BACKBONE = False
+FREEZE_LAYERS = ['C1', 'C3', 'C5']
+OPTIMIZER = 'AdamW'
+EXP_DESC = f'Baseline'
 
 # => Paths
 # Create the output directory
@@ -42,6 +45,20 @@ else:
     exp_num = 1
 OUTDIR = OUTDIR / str(exp_num)
 OUTDIR.mkdir(exist_ok=True)
+
+# => Save config
+exp_data = {
+    'lr': LR,
+    'optimizer': OPTIMIZER,
+    'bz': BATCH_SIZE,
+    'eps': EPOCHS,
+    'freeze_backbone': FREEZE_BACKBONE,
+    'desc': EXP_DESC
+}
+with OUTDIR.joinpath('hyp.json').open('w') as fp:
+    json.dump(exp_data, fp)
+
+print(f'Starting experiment {str(exp_num)}')
 
 # => Tensorboard writer and device and best model
 writer = SummaryWriter(log_dir=OUTDIR)
@@ -72,13 +89,28 @@ testloader = DataLoader(
     num_workers=2
 )
 
+# => Print each
+print_each = int(len(trainloader) / PRINT_N_PER_EP)
+
 # => Model
 net = LeNet(in_channels=3).to(device)
 net.load_state_dict(torch.load(PRETRAINED_MODEL)['state_dict'])
 
+# => Freeze backbone
+# Only C1, C3 and C5 are trainable
+if FREEZE_BACKBONE:
+    for name, param in net.named_parameters():
+        if any([x in name for x in FREEZE_LAYERS]):
+            param.requires_grad = False
+
 # => Loss and optimizer
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.AdamW(net.parameters(), lr=LR)
+if OPTIMIZER == 'AdamW':
+    optimizer = optim.AdamW(net.parameters(), lr=LR)
+elif OPTIMIZER == 'SGD':
+    optimizer = optim.SGD(net.parameters(), lr=LR, momentum=0.9)
+else:
+    raise ValueError(f'Optimizer {OPTIMIZER} not implemented')
 
 # => Train
 for epoch in tqdm(range(EPOCHS), desc='Epochs', leave=False):
@@ -100,28 +132,29 @@ for epoch in tqdm(range(EPOCHS), desc='Epochs', leave=False):
 
         # print statistics
         running_loss += loss.item()
-        if i % PRINT_EACH == PRINT_EACH - 1:    # print every PRINT_EACH mini-batches
-            writer.add_scalar('training loss', running_loss / PRINT_EACH, epoch * len(trainloader) + i)    
+        if i % print_each == print_each - 1:    # print every print_each mini-batches
+            writer.add_scalar('training loss', running_loss / print_each, epoch * len(trainloader) + i)    
             running_loss = 0.0
-    
+        
+        # Add scalars for each layer: mean and std
+        for name, param in net.named_parameters():
+            if any([x in name for x in FREEZE_LAYERS]):
+                writer.add_scalar(f'Backbone/{name}_mean', param.data.mean(), epoch * len(trainloader) + i)
+                writer.add_scalar(f'Backbone/{name}_std', param.data.std(), epoch * len(trainloader) + i)
+            elif any([x in name for x in ['F6', 'F7']]):
+                writer.add_scalar(f'Head/{name}_mean', param.data.mean(), epoch * len(trainloader) + i)
+                writer.add_scalar(f'Head/{name}_std', param.data.std(), epoch * len(trainloader) + i)
+            
     test_acc = check_accuracy(testloader, net, device)
     writer.add_scalar('test accuracy', test_acc, epoch)
-      
+    
     # Store best model for saving
     best_model.compare_and_store(net, test_acc, epoch)
 
-    if epoch % 5 == 0:
-        continue_training = input('Continue training? [y/n]: ')
-        if continue_training == 'n':
-            break
+    # if epoch % 15 == 0:
+    #     continue_training = input(' Continue training? [y/n]: ')
+    #     if continue_training == 'n':
+    #         break
 
 print('Finished Training')
 best_model.save()
-
-exp_data = {
-    'lr': LR,
-    'optimizer': 'AdamW',
-    'bz': BATCH_SIZE,
-}
-with OUTDIR.joinpath('hyp.json').open('w') as fp:
-    json.dump(exp_data, fp)
