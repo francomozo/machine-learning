@@ -1,7 +1,7 @@
 """
 @author: Franco Mozo
 @date:   06-04-2023
-@desc:   This script allows to finetune a pretrained model (trained with pretrain.py) on a new dataset.
+@desc:   This script allows to finetune a pretrained model (trained with pretrain.py) on a new dataset while unfreezing the  .
 """
 
 from _init_paths import _init_path
@@ -26,20 +26,20 @@ OUTDIR = Path('exps/gradual_unfreezing')
 MODEL_NAME = Path('finetuned_lenet_animal10.pth')
 PRETRAINED_MODEL = Path('exps/pretraining/3/lenet_pretrained_cifar.pth')
 
+# This config is getting out of hand
 IMAGE_SIZE = 32
 PRINT_N_PER_EP = 5
 BATCH_SIZE = 128
-EPOCHS = 70
+EPOCHS = 120
 OPTIMIZER = 'AdamW'
-LR = 0.0007
+LR = 0.0002
 
-FREEZE_BACKBONE = False
-FREEZE_LAYERS = ['C1', 'C3', 'C5']
-TRAIN_SECOND_STAGE = True
-if TRAIN_SECOND_STAGE:
-    # here select the finetuned model to retrain
-    PRETRAINED_MODEL = Path('exps/gradual_unfreezing/4/finetuned_lenet_animal10.pth')
-EXP_DESC = f'Baseline_3_head_convergence_second_stage_train_converged_head'
+FREEZE_LAYERS = ['C1', 'C3', 'C5'] # Initially freeze the backbone
+UNFREEZE_EPS = [90, 70, 50] # Unfreeze the backbone in 3 steps (C5 in epoch 20, C3 in epoch 40, C1 in epoch 50)
+LRS = [0.001, 0.0008, 0.0005] # Learning rates for C1, C2 and C3 respectively
+LRS_BY_LAYER = True
+
+EXP_DESC = f'Gradual_unfreezing'
 
 # => Paths
 # Create the output directory
@@ -58,9 +58,10 @@ exp_data = {
     'optimizer': OPTIMIZER,
     'bz': BATCH_SIZE,
     'eps': EPOCHS,
-    'train_second_stage': TRAIN_SECOND_STAGE,
-    'pretrained_model': str(PRETRAINED_MODEL),
-    'freeze_backbone': FREEZE_BACKBONE,
+    'freeze_layers': FREEZE_LAYERS,
+    'unfreeze_eps': UNFREEZE_EPS,
+    'lrs': LRS,
+    'lrs_by_layer': LRS_BY_LAYER,
     'desc': EXP_DESC
 }
 with OUTDIR.joinpath('hyp.json').open('w') as fp:
@@ -106,17 +107,41 @@ net.load_state_dict(torch.load(PRETRAINED_MODEL)['state_dict'])
 
 # => Freeze backbone
 # Only C1, C3 and C5 are trainable
-if FREEZE_BACKBONE:
-    for name, param in net.named_parameters():
-        if any([x in name for x in FREEZE_LAYERS]):
-            param.requires_grad = False
+for name, param in net.named_parameters():
+    if any([x in name for x in FREEZE_LAYERS]):
+        param.requires_grad = False
 
 # => Loss and optimizer
 criterion = nn.CrossEntropyLoss()
 if OPTIMIZER == 'AdamW':
-    optimizer = optim.AdamW(net.parameters(), lr=LR)
+    if LRS_BY_LAYER:
+        optimizer = optim.AdamW(
+            [
+                {'params': net.C1.parameters(), 'lr': LRS[0]},
+                {'params': net.C3.parameters(), 'lr': LRS[1]},
+                {'params': net.C5.parameters(), 'lr': LRS[2]},
+                {'params': net.F6.parameters()},
+                {'params': net.F7.parameters()}
+            ], 
+            lr=LR
+        )
+    else:
+        optimizer = optim.AdamW(net.parameters(), lr=LR)
 elif OPTIMIZER == 'SGD':
-    optimizer = optim.SGD(net.parameters(), lr=LR, momentum=0.9)
+    if LRS_BY_LAYER:
+        optimizer = optim.SGD(
+            [
+                {'params': net.C1.parameters(), 'lr': LRS[0]},
+                {'params': net.C3.parameters(), 'lr': LRS[1]},
+                {'params': net.C5.parameters(), 'lr': LRS[2]},
+                {'params': net.F6.parameters()},
+                {'params': net.F7.parameters()}
+            ], 
+            lr=LR, 
+            momentum=0.9
+        )
+    else:
+        optimizer = optim.SGD(net.parameters(), lr=LR, momentum=0.9)
 else:
     raise ValueError(f'Optimizer {OPTIMIZER} not implemented')
 
@@ -152,7 +177,16 @@ for epoch in tqdm(range(EPOCHS), desc='Epochs', leave=False):
             elif any([x in name for x in ['F6', 'F7']]):
                 writer.add_scalar(f'Head/{name}_mean', param.data.mean(), epoch * len(trainloader) + i)
                 writer.add_scalar(f'Head/{name}_std', param.data.std(), epoch * len(trainloader) + i)
-            
+    
+    if epoch in UNFREEZE_EPS:
+        # Get the index of the epoch to unfreeze
+        idx = UNFREEZE_EPS.index(epoch)
+        layer2unfreeze = FREEZE_LAYERS[idx]
+        for name, param in net.named_parameters():
+            if any([x in name for x in [layer2unfreeze]]):
+                param.requires_grad = True
+        print(f'Unfreezing {layer2unfreeze}')
+    
     test_acc = check_accuracy(testloader, net, device)
     writer.add_scalar('test accuracy', test_acc, epoch)
     
