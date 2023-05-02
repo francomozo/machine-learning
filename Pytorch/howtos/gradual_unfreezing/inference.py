@@ -5,7 +5,7 @@
 """
 from _init_paths import _init_path
 
-_init_path('Pytorch/from_scratch/src', recursive=True)
+_init_path('Pytorch/from_scratch/vision/src', recursive=True)
 from argparse import ArgumentParser
 
 import cv2

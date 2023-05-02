@@ -6,7 +6,7 @@
 
 from _init_paths import _init_path
 
-_init_path('Pytorch/from_scratch/src', recursive=True)
+_init_path('Pytorch/from_scratch/vision/src', recursive=True)
 
 import json
 from pathlib import Path

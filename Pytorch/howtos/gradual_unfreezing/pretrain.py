@@ -6,7 +6,7 @@
 
 from _init_paths import _init_path
 
-_init_path('Pytorch/from_scratch/src', recursive=True)
+_init_path('Pytorch/from_scratch/vision/src', recursive=True)
 
 import json
 from pathlib import Path
@@ -32,7 +32,7 @@ OUTDIR = Path('exps/pretraining')
 
 # => Paths
 # Create the output directory
-OUTDIR.mkdir(exist_ok=True)
+OUTDIR.mkdir(parents=True, exist_ok=True)
 prev_exps = [str(x.stem) for x in OUTDIR.iterdir()]
 if prev_exps:
     exp_num = int(sorted(list(prev_exps), key=lambda x: int(x))[-1]) + 1
